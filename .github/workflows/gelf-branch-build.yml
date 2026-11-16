@@ -1,0 +1,55 @@
+name: gelf-branch-build
+
+on:
+  push:
+    branches: [ci-gelf-build]
+  workflow_dispatch:
+
+jobs:
+  codecs-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run GELF codec tests
+        run: cargo test -p codecs --lib gelf
+
+  build-linux:
+    needs: codecs-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      - name: Build release binary
+        env:
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release
+      - name: Smoke validate config
+        run: |
+          cat > /tmp/smoke.yaml <<'YAML'
+          sources:
+            t:
+              type: socket
+              mode: tcp
+              address: 127.0.0.1:1
+              decoding:
+                codec: gelf
+          sinks:
+            out:
+              type: console
+              inputs: ["t"]
+              encoding:
+                codec: json
+          YAML
+          ./target/release/vector validate --no-environment /tmp/smoke.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vector-gelf-patch-linux-amd64
+          path: target/release/vector
+          compression-level: 0
+          if-no-files-found: error
